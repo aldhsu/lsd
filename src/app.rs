@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::{App, Arg, ArgGroup};
 
 pub fn build() -> App<'static, 'static> {
     App::new("lsd")
@@ -140,6 +140,20 @@ pub fn build() -> App<'static, 'static> {
                 .number_of_values(1)
                 .help("How to display date [possible values: date, relative, +date-time-format]"),
         )
+        .group(ArgGroup::with_name("multisort").multiple(false).conflicts_with("singlesort"))
+        .arg(
+            Arg::with_name("sort")
+            .long("sort")
+            .group("multisort")
+            .require_equals(true)
+            .use_delimiter(true)
+            .help(
+                "Sort by specified fields eg. --sort=-size,extension will sort by size descending \
+                and then extension ascending. Fields are time, size, extension, directory, version. \
+                - at the beginning of the field will reverse the default sorting direction"
+                )
+            )
+        .group(ArgGroup::with_name("singlesort").multiple(true).conflicts_with("multisort"))
         .arg(
             Arg::with_name("timesort")
                 .short("t")
@@ -147,6 +161,7 @@ pub fn build() -> App<'static, 'static> {
                 .overrides_with("sizesort")
                 .overrides_with("extensionsort")
                 .overrides_with("versionsort")
+                .group("singlesort")
                 .multiple(true)
                 .help("Sort by time modified"),
         )
@@ -157,6 +172,7 @@ pub fn build() -> App<'static, 'static> {
                 .overrides_with("timesort")
                 .overrides_with("extensionsort")
                 .overrides_with("versionsort")
+                .group("singlesort")
                 .multiple(true)
                 .help("Sort by size"),
         )
@@ -167,6 +183,7 @@ pub fn build() -> App<'static, 'static> {
                 .overrides_with("sizesort")
                 .overrides_with("timesort")
                 .overrides_with("versionsort")
+                .group("singlesort")
                 .multiple(true)
                 .help("Sort by file extension"),
         )
@@ -177,12 +194,14 @@ pub fn build() -> App<'static, 'static> {
                 .overrides_with("timesort")
                 .overrides_with("sizesort")
                 .overrides_with("extensionsort")
+                .group("singlesort")
                 .help("Natural sort of (version) numbers within text"),
         )
         .arg(
             Arg::with_name("reverse")
                 .short("r")
                 .long("reverse")
+                .group("singlesort")
                 .multiple(true)
                 .help("Reverse the order of the sort"),
         )
@@ -192,7 +211,7 @@ pub fn build() -> App<'static, 'static> {
                 .possible_value("none")
                 .possible_value("first")
                 .possible_value("last")
-                .default_value("none")
+                .group("singlesort")
                 .multiple(true)
                 .number_of_values(1)
                 .help("Sort the directories then the files"),

@@ -8,9 +8,7 @@ pub struct Flags {
     pub layout: Layout,
     pub display_indicators: bool,
     pub recursive: bool,
-    pub sort_by: SortFlag,
-    pub sort_order: SortOrder,
-    pub directory_order: DirOrderFlag,
+    pub sorters: Vec<(SortOrder, SortFlag)>,
     pub size: SizeFlag,
     pub date: DateFlag,
     pub color: WhenFlag,
@@ -33,7 +31,6 @@ impl Flags {
         let icon_theme_inputs: Vec<&str> = matches.values_of("icon-theme").unwrap().collect();
         let size_inputs: Vec<&str> = matches.values_of("size").unwrap().collect();
         let date_inputs: Vec<&str> = matches.values_of("date").unwrap().collect();
-        let dir_order_inputs: Vec<&str> = matches.values_of("group-dirs").unwrap().collect();
         let ignore_globs_inputs: Vec<&str> = matches.values_of("ignore-glob").unwrap().collect();
         let dereference = matches.is_present("dereference");
         // inode set layout to oneline and blocks to inode,name
@@ -54,23 +51,72 @@ impl Flags {
             Display::DisplayOnlyVisible
         };
 
-        let sort_by = if matches.is_present("timesort") {
-            SortFlag::Time
-        } else if matches.is_present("sizesort") {
-            SortFlag::Size
-        } else if matches.is_present("extensionsort") {
-            SortFlag::Extension
-        } else if matches.is_present("versionsort") {
-            SortFlag::Version
+        let sorters = if let Some(values) = matches.values_of("sort") {
+            values
+                .map(|val| {
+                    let order_rev = val.starts_with("-");
+                    let order = if order_rev {
+                        SortOrder::Reverse
+                    } else {
+                        SortOrder::Default
+                    };
+                    let field = if order_rev { &val[1..] } else { &val[0..] };
+                    let field = match field {
+                        "extension" => SortFlag::Extension,
+                        "version" => SortFlag::Version,
+                        "size" => SortFlag::Size,
+                        "time" => SortFlag::Time,
+                        "name" => SortFlag::Name,
+                        "directory" => SortFlag::Directory,
+                        _ => {
+                            return Err(Error {
+                                message: "unknown field in sort".to_string(),
+                                info: None,
+                                kind: clap::ErrorKind::InvalidValue,
+                            })
+                        }
+                    };
+                    Ok((order, field))
+                })
+                .collect()
         } else {
-            SortFlag::Name
-        };
+            let mut sorters = vec![];
+            if let Some(dir_val) = matches.value_of("group-dirs") {
+                match dir_val {
+                    "first" => sorters.push((SortOrder::Default, SortFlag::Directory)),
+                    "last" => sorters.push((SortOrder::Reverse, SortFlag::Directory)),
+                    "none" => {}
+                    _ => {
+                        return Err(Error {
+                            message: "unknown field in group-dirs".to_string(),
+                            info: None,
+                            kind: clap::ErrorKind::InvalidValue,
+                        })
+                    }
+                }
+            };
 
-        let sort_order = if matches.is_present("reverse") {
-            SortOrder::Reverse
-        } else {
-            SortOrder::Default
-        };
+            let sort_by = if matches.is_present("timesort") {
+                SortFlag::Time
+            } else if matches.is_present("sizesort") {
+                SortFlag::Size
+            } else if matches.is_present("extensionsort") {
+                SortFlag::Extension
+            } else if matches.is_present("versionsort") {
+                SortFlag::Version
+            } else {
+                SortFlag::Name
+            };
+
+            let sort_order = if matches.is_present("reverse") {
+                SortOrder::Reverse
+            } else {
+                SortOrder::Default
+            };
+
+            sorters.push((sort_order, sort_by));
+            Ok(sorters)
+        }?;
 
         let layout = if matches.is_present("tree") {
             Layout::Tree
@@ -155,8 +201,7 @@ impl Flags {
             display_indicators: matches.is_present("indicators"),
             recursive,
             recursion_depth,
-            sort_by,
-            sort_order,
+            sorters,
             size: SizeFlag::from(size_inputs[size_inputs.len() - 1]),
             ignore_globs,
             blocks,
@@ -177,11 +222,6 @@ impl Flags {
                 WhenFlag::from(icon_inputs[icon_inputs.len() - 1])
             },
             icon_theme: IconTheme::from(icon_theme_inputs[icon_theme_inputs.len() - 1]),
-            directory_order: if classic_mode {
-                DirOrderFlag::None
-            } else {
-                DirOrderFlag::from(dir_order_inputs[dir_order_inputs.len() - 1])
-            },
             no_symlink: matches.is_present("no-symlink"),
             total_size: matches.is_present("total-size"),
             inode,
@@ -198,9 +238,7 @@ impl Default for Flags {
             display_indicators: false,
             recursive: false,
             recursion_depth: usize::max_value(),
-            sort_by: SortFlag::Name,
-            sort_order: SortOrder::Default,
-            directory_order: DirOrderFlag::None,
+            sorters: vec![(SortOrder::Default, SortFlag::Name)],
             size: SizeFlag::Default,
             date: DateFlag::Date,
             color: WhenFlag::Auto,
@@ -312,30 +350,13 @@ pub enum SortFlag {
     Size,
     Version,
     Extension,
+    Directory,
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum SortOrder {
     Default,
     Reverse,
-}
-
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
-pub enum DirOrderFlag {
-    None,
-    First,
-    Last,
-}
-
-impl<'a> From<&'a str> for DirOrderFlag {
-    fn from(when: &'a str) -> Self {
-        match when {
-            "none" => DirOrderFlag::None,
-            "first" => DirOrderFlag::First,
-            "last" => DirOrderFlag::Last,
-            _ => panic!("invalid \"when\" flag: {}", when),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -365,6 +386,7 @@ pub enum Layout {
 mod test {
     use super::Flags;
     use super::SortFlag;
+    use super::SortOrder;
     use crate::app;
     use clap::ErrorKind;
 
@@ -420,7 +442,7 @@ mod test {
         let res = Flags::from_matches(&matches);
 
         assert!(res.is_ok());
-        assert_eq!(res.unwrap().sort_by, SortFlag::Size);
+        assert_eq!(res.unwrap().sorters, vec![(SortOrder::Default, SortFlag::Size)]);
 
         let matches = app::build()
             .get_matches_from_safe(vec!["lsd", "-S", "-t"])
@@ -428,7 +450,7 @@ mod test {
         let res = Flags::from_matches(&matches);
 
         assert!(res.is_ok());
-        assert_eq!(res.unwrap().sort_by, SortFlag::Time);
+        assert_eq!(res.unwrap().sorters, vec![(SortOrder::Default, SortFlag::Time)]);
 
         let matches = app::build()
             .get_matches_from_safe(vec!["lsd", "-t", "-S", "-X"])
@@ -436,6 +458,6 @@ mod test {
         let res = Flags::from_matches(&matches);
 
         assert!(res.is_ok());
-        assert_eq!(res.unwrap().sort_by, SortFlag::Extension);
+        assert_eq!(res.unwrap().sorters, vec![(SortOrder::Default, SortFlag::Extension)]);
     }
 }
